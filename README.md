@@ -10,3 +10,4 @@ VS Code extension for the LS:MP GTA V platform, for Lua 5.5 (luax).
 | `lsmp.natives` | boolean | `true` | Include GTA V natives. |
 | `lsmp.autoUpdate` | boolean | `true` | Update definitions from lsmp.gg automatically. |
 | `lsmp.updateIntervalHours` | number | `1` | Hours between checks. `0`: only when a workspace opens. |
+| `lsmp.serverPath` | string | `""` | Path to `lsmp-server.exe`. Empty: auto-detect. |

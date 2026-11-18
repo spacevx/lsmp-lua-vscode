@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import { registerManifestChecks } from './manifest';
+import { ServerController } from './server';
 import { Definitions, type UpdateOutcome } from './updater';
 
 const DOCS = 'https://lsmp.gg/resources/api';
@@ -116,10 +117,16 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	const log = vscode.window.createOutputChannel('LS:MP Lua');
 	definitions = new Definitions(context, log);
 	library = definitions.current();
+	const server = new ServerController(log);
 	registerManifestChecks(context);
 
 	context.subscriptions.push(
 		log,
+		server,
+		vscode.commands.registerCommand('lsmp.server.start', () => server.start()),
+		vscode.commands.registerCommand('lsmp.server.stop', () => server.stop()),
+		vscode.commands.registerCommand('lsmp.server.restart', () => server.restart()),
+		vscode.commands.registerCommand('lsmp.server.metrics', () => server.showMetrics()),
 		vscode.commands.registerCommand('lsmp.enable', async () => {
 			await settings().update('enable', 'always', Target.Workspace);
 			await apply();

@@ -58,6 +58,30 @@
         "command": "lsmp.openDocs",
         "title": "Open the SDK reference",
         "category": "LS:MP"
+      },
+      {
+        "command": "lsmp.server.start",
+        "title": "Start server",
+        "category": "LS:MP",
+        "icon": "$(debug-start)"
+      },
+      {
+        "command": "lsmp.server.restart",
+        "title": "Restart server",
+        "category": "LS:MP",
+        "icon": "$(debug-restart)"
+      },
+      {
+        "command": "lsmp.server.stop",
+        "title": "Stop server",
+        "category": "LS:MP",
+        "icon": "$(debug-stop)"
+      },
+      {
+        "command": "lsmp.server.metrics",
+        "title": "Show server metrics",
+        "category": "LS:MP",
+        "icon": "$(pulse)"
       }
     ],
     "configuration": {
@@ -88,6 +112,11 @@
           "default": 1,
           "minimum": 0,
           "markdownDescription": "Hours between checks. `0`: only when a workspace opens."
+        },
+        "lsmp.serverPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to `lsmp-server.exe`. Empty: auto-detect."
         }
       }
     },
@@ -111,6 +140,18 @@
           "**/resources.json"
         ],
         "url": "./schemas/resources.schema.json"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "lsmp.server.restart",
+        "key": "ctrl+alt+r",
+        "when": "lsmp.serverRunning"
+      },
+      {
+        "command": "lsmp.server.start",
+        "key": "ctrl+alt+r",
+        "when": "!lsmp.serverRunning"
       }
     ]
   },
