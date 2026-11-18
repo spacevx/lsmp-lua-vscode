@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
+import { registerManifestChecks } from './manifest';
 import { Definitions, type UpdateOutcome } from './updater';
 
 const DOCS = 'https://lsmp.gg/resources/api';
@@ -115,6 +116,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	const log = vscode.window.createOutputChannel('LS:MP Lua');
 	definitions = new Definitions(context, log);
 	library = definitions.current();
+	registerManifestChecks(context);
 
 	context.subscriptions.push(
 		log,
