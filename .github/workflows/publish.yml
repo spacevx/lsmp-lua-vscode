@@ -1,0 +1,40 @@
+name: Publish
+
+on:
+  push:
+    branches: [main]
+    paths: [package.json]
+  workflow_dispatch:
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: Compare versions
+        id: version
+        run: |
+          local=$(node -p "require('./package.json').version")
+          id=$(node -p "const p = require('./package.json'); p.publisher + '.' + p.name")
+          remote=$(npx vsce show "$id" --json 2>/dev/null | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{console.log(JSON.parse(s).versions[0].version)}catch{console.log('')}})")
+          echo "local=$local remote=$remote"
+          if [ "$local" != "$remote" ]; then echo "publish=true" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Publish
+        if: steps.version.outputs.publish == 'true'
+        run: npx vsce publish --oidc --no-dependencies --skip-license

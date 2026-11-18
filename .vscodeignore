@@ -5,3 +5,6 @@ tsconfig.json
 dist/cli.js
 .git/**
 *.vsix
+.github/**
+.gitignore
+.gitattributes

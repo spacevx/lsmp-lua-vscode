@@ -1,7 +1,7 @@
 {
   "name": "lsmp-lua-vscode",
   "displayName": "LS:MP Lua",
-  "description": "IntelliSense for LS:MP",
+  "description": "Unofficial IntelliSense for LS:MP",
   "version": "0.1.0",
   "publisher": "spacev",
   "icon": "images/icon.png",
@@ -176,7 +176,7 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "@types/vscode": "1.80.0",
-    "@vscode/vsce": "3.6.0",
+    "@vscode/vsce": "4.1.1",
     "typescript": "5.9.3"
   }
 }
