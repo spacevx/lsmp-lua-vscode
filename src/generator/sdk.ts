@@ -173,6 +173,14 @@ function docFor(f: SdkFunction, page: string): string {
 	return comment(lines.join('\n'));
 }
 
+const HANDLER_TYPES: Record<string, string> = {
+	'lsmp.onClient|server': 'fun(source: integer, ...: any)',
+	'lsmp.onCall|shared': 'fun(source: integer?, ...: any): any',
+	'lsmp.onServer|client': 'fun(...: any)',
+	'lsmp.registerCommand|server': 'fun(args: string[], raw: string, source: integer?, invoker: string)',
+	'lsmp.registerCommand|client': 'fun(args: string[], raw: string)',
+};
+
 function emitFunction(f: SdkFunction, page: string, declaration: string, { luaType, parseReturns }: TypeMapper): string {
 	const out = [docFor(f, page)];
 	const names: string[] = [];
@@ -186,7 +194,8 @@ function emitFunction(f: SdkFunction, page: string, declaration: string, { luaTy
 		}
 		const name = safeName(p.name);
 		names.push(name);
-		out.push(`---@param ${name}${p.optional ? '?' : ''} ${paramType(p.type, p.desc, luaType, p.name)} ${desc}`);
+		const handler = p.name === 'fn' ? HANDLER_TYPES[`${f.name}|${f.side}`] : undefined;
+		out.push(`---@param ${name}${p.optional ? '?' : ''} ${handler ?? paramType(p.type, p.desc, luaType, p.name)} ${desc}`);
 	}
 	const signature = f.signature.lua ?? '';
 	if (/\bcb\b/.test(signature) && !names.includes('cb') && !vararg) {
