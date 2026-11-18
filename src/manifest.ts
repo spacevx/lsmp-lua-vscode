@@ -9,7 +9,7 @@ const SCRIPT_KEYS: Record<string, string[]> = {
 };
 const SKIPPED_FOLDERS = new Set(['node_modules', '.git', '.svn', '.hg']);
 
-function listFiles(root: string): string[] {
+export function listFiles(root: string): string[] {
 	const out: string[] = [];
 	const walk = (dir: string, prefix: string): void => {
 		let entries: fs.Dirent[];
@@ -28,7 +28,7 @@ function listFiles(root: string): string[] {
 	return out;
 }
 
-function globToRegex(pattern: string): RegExp {
+export function globToRegex(pattern: string): RegExp {
 	let source = '';
 	for (let i = 0; i < pattern.length; i++) {
 		const char = pattern[i];
