@@ -1,9 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import type { EventIndex, Span, Use } from './events';
-
-type TypeMap = Record<string, Record<string, (string | null)[]>>;
+import type { EventIndex, Span } from './events';
 
 const VECTORS = new Set(['vector2', 'vector3', 'vector4', 'quaternion']);
 const SAME_TYPE_METHODS = new Set(['normalize', 'cross', 'lerp', 'add', 'sub', 'mul', 'inverse', 'conjugate']);
@@ -150,6 +148,10 @@ export class Inferrer {
 			let last: RegExpExecArray | undefined;
 			for (const m of before.matchAll(assignment)) last = m as RegExpExecArray;
 			if (last) {
+				const lineStart = before.lastIndexOf('\n', last.index + (before[last.index] === '\n' ? 0 : -1));
+				const previous = before.slice(before.lastIndexOf('\n', lineStart - 1) + 1, Math.max(lineStart, 0));
+				const annotated = /^\s*---\s*@type\s+([^#\n]+?)\s*(?:#.*)?$/.exec(previous)?.[1];
+				if (annotated && !annotated.includes(',') && VALID_TYPE.test(annotated)) return normalize(annotated);
 				const value = last[1].replace(/--.*$/, '').trim();
 				return this.infer(value, text, last.index + last[0].length - last[1].length, depth + 1);
 			}
@@ -186,43 +188,87 @@ const unionOf = (types: Set<string>): string => [...types].sort((x, y) => Number
 
 const isReference = (expr: string): boolean => /^[A-Za-z_][\w]*(?:\s*\.\s*[A-Za-z_]\w*)*$/.test(expr.trim());
 
+const literal = (name: string): string => `"${name.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+
+const IDENTIFIER = /^[A-Za-z_]\w*$/;
+
+const CALL_SIGNATURES: Record<string, string> = { call: 'name, ...', callServer: 'name, ...', callClient: 'playerId, name, ...' };
+const HANDLER_SIGNATURES: Record<string, string> = { on: 'name, fn, filter', once: 'name, fn, filter', onClient: 'name, fn', onServer: 'name, fn', onCall: 'name, fn' };
+
+interface HandlerTypes {
+	params: string[];
+	types: (string | null)[];
+}
+
+export interface EventTypeData {
+	handlers: Map<string, Map<string, HandlerTypes>>;
+	calls: Map<string, Map<string, string>>;
+}
+
+export function renderTypes(data: EventTypeData): string {
+	const out = ['---@meta', ''];
+	for (const [fn, byName] of [...data.handlers].sort(([a], [b]) => a.localeCompare(b))) {
+		for (const [name, entry] of [...byName].sort(([a], [b]) => a.localeCompare(b))) {
+			const params = entry.params.map((param, i) => (param === '...' ? '...: any' : `${IDENTIFIER.test(param) ? param : `p${i + 1}`}: ${entry.types[i] ?? 'any'}`));
+			const filter = fn === 'on' || fn === 'once' ? ', filter?: any' : '';
+			const result = fn === 'onCall' ? ': any' : '';
+			out.push(`---@overload fun(name: ${literal(name)}, fn: fun(${params.join(', ')})${result}${filter})`);
+		}
+		out.push(`function lsmp.${fn}(${HANDLER_SIGNATURES[fn]}) end`, '');
+	}
+	for (const [fn, byName] of [...data.calls].sort(([a], [b]) => a.localeCompare(b))) {
+		for (const [name, type] of [...byName].sort(([a], [b]) => a.localeCompare(b))) {
+			const target = fn === 'callClient' ? 'playerId: integer, ' : '';
+			out.push(`---@overload fun(${target}name: ${literal(name)}, ...: any): ${type.includes('|') ? `(${type})` : type}, string?`);
+		}
+		out.push(`function lsmp.${fn}(${CALL_SIGNATURES[fn]}) end`, '');
+	}
+	return out.join('\n');
+}
+
+interface FileCache {
+	text: string;
+	types: Map<string, string | undefined>;
+}
+
 export class EventTypes implements vscode.Disposable {
 	private timer: NodeJS.Timeout | undefined;
 	private running = false;
-	private lastJson = '';
+	private lastOutput = '';
+	private readonly cache = new Map<string, FileCache>();
+	private returns: Record<string, string> = {};
+	private returnsFrom = '';
 	private readonly subscription: vscode.Disposable;
 
 	constructor(
 		private readonly index: EventIndex,
 		private readonly library: () => string,
 		private readonly typesFile: string,
-		private readonly onChange: () => Promise<void>,
 		private readonly log: vscode.OutputChannel,
 	) {
 		this.subscription = index.onDidChange(() => this.schedule());
 		try {
-			this.lastJson = fs.readFileSync(typesFile, 'utf8');
+			this.lastOutput = fs.readFileSync(typesFile, 'utf8');
 		} catch {
-			this.lastJson = '';
+			this.lastOutput = '';
 		}
 		this.schedule();
 	}
 
 	private schedule(): void {
 		clearTimeout(this.timer);
-		this.timer = setTimeout(() => void this.run(), 1500);
+		this.timer = setTimeout(() => void this.run(), 400);
 	}
 
 	private async run(): Promise<void> {
 		if (this.running) return this.schedule();
 		this.running = true;
 		try {
-			const json = JSON.stringify({ files: await this.compute() });
-			if (json !== this.lastJson) {
-				this.lastJson = json;
+			const output = renderTypes(await this.compute());
+			if (output !== this.lastOutput) {
+				this.lastOutput = output;
 				fs.mkdirSync(path.dirname(this.typesFile), { recursive: true });
-				fs.writeFileSync(this.typesFile, json);
-				await this.onChange();
+				fs.writeFileSync(this.typesFile, output);
 			}
 		} catch (error) {
 			this.log.appendLine(`event types: ${(error as Error).message}`);
@@ -231,56 +277,68 @@ export class EventTypes implements vscode.Disposable {
 		}
 	}
 
-	private text(uri: vscode.Uri, cache: Map<string, string>): string {
+	private file(uri: vscode.Uri, seen: Set<string>): FileCache {
 		const key = uri.toString();
-		let text = cache.get(key);
-		if (text === undefined) {
-			const open = vscode.workspace.textDocuments.find((d) => d.uri.toString() === key);
-			try {
-				text = open ? open.getText() : fs.readFileSync(uri.fsPath, 'utf8');
-			} catch {
-				text = '';
-			}
-			cache.set(key, text);
+		let entry = this.cache.get(key);
+		if (seen.has(key) && entry) return entry;
+		seen.add(key);
+		const open = vscode.workspace.textDocuments.find((d) => d.uri.toString() === key);
+		let text = '';
+		try {
+			text = open ? open.getText() : fs.readFileSync(uri.fsPath, 'utf8');
+		} catch {
+			text = '';
 		}
-		return text;
+		if (!entry || entry.text !== text) {
+			entry = { text, types: new Map() };
+			this.cache.set(key, entry);
+		}
+		return entry;
 	}
 
-	private async argType(emitter: Use, index: number, inferrer: Inferrer, cache: Map<string, string>): Promise<string | undefined> {
-		const span = emitter.args[index];
-		return span ? this.exprType(emitter.uri, span, inferrer, cache) : 'nil';
-	}
-
-	private async exprType(uri: vscode.Uri, span: Span, inferrer: Inferrer, cache: Map<string, string>): Promise<string | undefined> {
-		const text = this.text(uri, cache);
+	private async exprType(uri: vscode.Uri, span: Span, inferrer: Inferrer, seen: Set<string>): Promise<string | undefined> {
+		const entry = this.file(uri, seen);
+		const key = `${span.start}:${span.end}`;
+		if (entry.types.has(key)) return entry.types.get(key);
+		const { text } = entry;
 		const expr = text.slice(span.start, span.end);
-		const lua = /\.lua$/i.test(uri.fsPath);
+		const document = /\.lua$/i.test(uri.fsPath) ? vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString()) : undefined;
 		const hover = async (): Promise<string | undefined> => {
-			if (!lua) return undefined;
-			const document = await vscode.workspace.openTextDocument(uri);
+			if (!document || document.getText() !== text) return undefined;
 			const at = expr.endsWith(')') ? span.start + matchingOpen(expr, expr.length - 1) - 1 : span.end - 1;
 			return hoverType(await vscode.commands.executeCommand<vscode.Hover[]>('vscode.executeHoverProvider', uri, document.positionAt(Math.max(span.start, at))));
 		};
-		if (isReference(expr)) {
-			const fromLuaLS = await hover();
-			if (fromLuaLS && fromLuaLS !== 'table') return fromLuaLS;
-		}
-		return inferrer.infer(expr, text, span.start) ?? (await hover());
+		let type = inferrer.infer(expr, text, span.start);
+		if (isReference(expr) && (!type || type === 'table' || type.startsWith('{'))) type = (await hover()) ?? type;
+		else if (!type) type = await hover();
+		entry.types.set(key, type);
+		return type;
 	}
 
-	private async compute(): Promise<TypeMap> {
-		let returns: Record<string, string> = {};
-		try {
-			returns = JSON.parse(fs.readFileSync(path.join(this.library(), 'returns.json'), 'utf8')) as Record<string, string>;
-		} catch {
-			returns = {};
+	private inferrer(): Inferrer {
+		const library = this.library();
+		if (library !== this.returnsFrom) {
+			this.returnsFrom = library;
+			try {
+				this.returns = JSON.parse(fs.readFileSync(path.join(library, 'returns.json'), 'utf8')) as Record<string, string>;
+			} catch {
+				this.returns = {};
+			}
 		}
-		const inferrer = new Inferrer(returns);
-		const cache = new Map<string, string>();
-		const map: TypeMap = {};
+		return new Inferrer(this.returns);
+	}
+
+	private async compute(): Promise<EventTypeData> {
+		const inferrer = this.inferrer();
+		const seen = new Set<string>();
+		const data: EventTypeData = { handlers: new Map(), calls: new Map() };
+		const live = new Set<string>();
 		for (const handler of this.index.all()) {
 			if (handler.role !== 'handle' || !HANDLERS.has(handler.fn) || !handler.params.length || !/\.lua$/i.test(handler.uri.fsPath)) continue;
-			const emitters = this.index.counterparts(handler).filter((e) => e.args !== undefined);
+			live.add(handler.uri.toString());
+			const byName = data.handlers.get(handler.fn) ?? new Map<string, HandlerTypes>();
+			if (byName.has(handler.name)) continue;
+			const emitters = this.index.counterparts(handler);
 			if (!emitters.length) continue;
 			const serverCall = handler.fn === 'onCall' && (handler.side === 'server' || (handler.side !== 'client' && emitters.some((e) => e.fn === 'callServer')));
 			const hasSource = handler.fn === 'onClient' || serverCall;
@@ -291,39 +349,46 @@ export class EventTypes implements vscode.Disposable {
 				const found = new Set<string>();
 				let unknown = false;
 				for (const emitter of emitters) {
-					const type = await this.argType(emitter, i, inferrer, cache);
+					live.add(emitter.uri.toString());
+					const span = emitter.args[i];
+					const type = span ? await this.exprType(emitter.uri, span, inferrer, seen) : 'nil';
 					if (type) found.add(type);
 					else unknown = true;
 				}
-				types.push(!unknown && found.size ? [...found].join('|') : null);
+				types.push(!unknown && found.size ? unionOf(found) : null);
 			}
 			if (!types.some(Boolean)) continue;
-			const file = handler.uri.toString().toLowerCase();
-			(map[file] ??= {})[`${handler.fn}|${handler.name}`] = types;
+			byName.set(handler.name, { params: handler.params, types });
+			data.handlers.set(handler.fn, byName);
 		}
 		for (const caller of this.index.all()) {
-			if (caller.role !== 'emit' || !CALLERS.has(caller.fn) || !/.lua$/i.test(caller.uri.fsPath)) continue;
-			const handlers = this.index.counterparts(caller).filter((h) => h.fn === 'onCall' && h.returns);
+			if (caller.role !== 'emit' || !CALLERS.has(caller.fn) || !/\.lua$/i.test(caller.uri.fsPath)) continue;
+			const byName = data.calls.get(caller.fn) ?? new Map<string, string>();
+			if (byName.has(caller.name)) continue;
+			const handlers = this.index.counterparts(caller).filter((h) => h.fn === 'onCall');
 			if (!handlers.length) continue;
 			const found = new Set<string>();
 			let unknown = false;
 			for (const handler of handlers) {
+				live.add(handler.uri.toString());
 				if (!handler.returns.length) found.add('nil');
 				for (const span of handler.returns) {
-					const type = await this.exprType(handler.uri, span, inferrer, cache);
+					const type = await this.exprType(handler.uri, span, inferrer, seen);
 					if (type) found.add(type);
 					else unknown = true;
 				}
 			}
 			if (unknown || !found.size) continue;
-			const file = caller.uri.toString().toLowerCase();
-			(map[file] ??= {})[`call|${caller.name}`] = [unionOf(found)];
+			byName.set(caller.name, unionOf(found));
+			data.calls.set(caller.fn, byName);
 		}
-		return map;
+		for (const key of this.cache.keys()) if (!live.has(key)) this.cache.delete(key);
+		return data;
 	}
 
 	dispose(): void {
 		clearTimeout(this.timer);
 		this.subscription.dispose();
+		this.cache.clear();
 	}
 }

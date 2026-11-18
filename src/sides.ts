@@ -212,6 +212,16 @@ export function registerSideChecks(context: vscode.ExtensionContext, library: ()
 	const refreshOpen = (): void => vscode.workspace.textDocuments.forEach(refresh);
 
 	let pending: NodeJS.Timeout | undefined;
+	const typing = new Map<string, vscode.TextDocument>();
+	let typingTimer: NodeJS.Timeout | undefined;
+	const refreshSoon = (document: vscode.TextDocument): void => {
+		typing.set(document.uri.toString(), document);
+		clearTimeout(typingTimer);
+		typingTimer = setTimeout(() => {
+			for (const queued of typing.values()) if (!queued.isClosed) refresh(queued);
+			typing.clear();
+		}, 300);
+	};
 	context.subscriptions.push(
 		collection,
 		vscode.workspace.onDidOpenTextDocument(refresh),
@@ -219,13 +229,13 @@ export function registerSideChecks(context: vscode.ExtensionContext, library: ()
 			if (path.basename(event.document.uri.fsPath).toLowerCase() === 'manifest.json') {
 				clearTimeout(pending);
 				pending = setTimeout(refreshOpen, 300);
-			} else refresh(event.document);
+			} else if (event.contentChanges.length && event.document.languageId === 'lua') refreshSoon(event.document);
 		}),
 		vscode.workspace.onDidSaveTextDocument((document) => {
 			if (path.basename(document.uri.fsPath).toLowerCase() === 'manifest.json') refreshOpen();
 		}),
 		vscode.workspace.onDidCloseTextDocument((document) => collection.delete(document.uri)),
-		{ dispose: () => clearTimeout(pending) },
+		{ dispose: () => (clearTimeout(pending), clearTimeout(typingTimer)) },
 	);
 	refreshOpen();
 }

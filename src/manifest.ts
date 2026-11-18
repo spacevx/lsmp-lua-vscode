@@ -100,37 +100,93 @@ export function check(document: vscode.TextDocument): vscode.Diagnostic[] {
 export function registerManifestChecks(context: vscode.ExtensionContext): void {
 	const collection = vscode.languages.createDiagnosticCollection('lsmp-manifest');
 	const isManifest = (uri: vscode.Uri): boolean => path.basename(uri.fsPath).toLowerCase() === 'manifest.json';
+	const ignored = /[\\/](?:node_modules|\.git)[\\/]/i;
+
+	const lines = (text: string): number[] => {
+		const starts = [0];
+		for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) starts.push(i + 1);
+		return starts;
+	};
+	const fromDisk = (uri: vscode.Uri): vscode.TextDocument | undefined => {
+		let text: string;
+		try {
+			text = fs.readFileSync(uri.fsPath, 'utf8');
+		} catch {
+			return undefined;
+		}
+		const starts = lines(text);
+		const positionAt = (offset: number): vscode.Position => {
+			let low = 0;
+			let high = starts.length - 1;
+			while (low < high) {
+				const mid = (low + high + 1) >> 1;
+				if (starts[mid] <= offset) low = mid;
+				else high = mid - 1;
+			}
+			return new vscode.Position(low, offset - starts[low]);
+		};
+		return { uri, getText: () => text, positionAt } as unknown as vscode.TextDocument;
+	};
 
 	const refresh = (document: vscode.TextDocument): void => {
-		if (isManifest(document.uri)) collection.set(document.uri, check(document));
+		if (isManifest(document.uri) && !ignored.test(document.uri.fsPath)) collection.set(document.uri, check(document));
 	};
-	const refreshUri = async (uri: vscode.Uri): Promise<void> => {
-		try {
-			refresh(await vscode.workspace.openTextDocument(uri));
-		} catch {
-			collection.delete(uri);
-		}
+	const refreshUri = (uri: vscode.Uri): void => {
+		const open = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
+		const document = open ?? fromDisk(uri);
+		if (document) refresh(document);
+		else collection.delete(uri);
 	};
 	const refreshAll = async (): Promise<void> => {
-		for (const uri of await vscode.workspace.findFiles('**/manifest.json', '**/{node_modules,.git}/**', 500)) await refreshUri(uri);
+		for (const uri of await vscode.workspace.findFiles('**/manifest.json', '**/{node_modules,.git}/**', 500)) refreshUri(uri);
+	};
+	const owner = (file: string): vscode.Uri | undefined => {
+		let dir = path.dirname(file);
+		for (let depth = 0; depth < 8; depth++) {
+			const manifest = path.join(dir, 'manifest.json');
+			if (fs.existsSync(manifest)) return vscode.Uri.file(manifest);
+			const parent = path.dirname(dir);
+			if (parent === dir) break;
+			dir = parent;
+		}
+		return undefined;
 	};
 
-	const watcher = vscode.workspace.createFileSystemWatcher('**/*');
+	const queued = new Map<string, vscode.Uri>();
 	let pending: NodeJS.Timeout | undefined;
-	const refreshSoon = (uri: vscode.Uri): void => {
-		if (isManifest(uri)) return void refreshUri(uri);
+	const queue = (uri: vscode.Uri | undefined): void => {
+		if (!uri) return;
+		queued.set(uri.toString(), uri);
 		clearTimeout(pending);
-		pending = setTimeout(() => void refreshAll(), 300);
+		pending = setTimeout(() => {
+			for (const target of queued.values()) refreshUri(target);
+			queued.clear();
+		}, 300);
+	};
+	const onScript = (uri: vscode.Uri): void => {
+		if (!ignored.test(uri.fsPath)) queue(owner(uri.fsPath));
 	};
 
+	const scripts = vscode.workspace.createFileSystemWatcher('**/*.{lua,js,mjs,cjs}', false, true, false);
+	const manifests = vscode.workspace.createFileSystemWatcher('**/manifest.json');
 	context.subscriptions.push(
 		collection,
-		watcher,
-		watcher.onDidCreate(refreshSoon),
-		watcher.onDidDelete((uri) => (isManifest(uri) ? collection.delete(uri) : refreshSoon(uri))),
-		vscode.workspace.onDidOpenTextDocument(refresh),
-		vscode.workspace.onDidChangeTextDocument((event) => refresh(event.document)),
-		vscode.workspace.onDidRenameFiles(() => void refreshAll()),
+		scripts,
+		manifests,
+		scripts.onDidCreate(onScript),
+		scripts.onDidDelete(onScript),
+		manifests.onDidCreate(queue),
+		manifests.onDidChange(queue),
+		manifests.onDidDelete((uri) => collection.delete(uri)),
+		vscode.workspace.onDidChangeTextDocument((event) => {
+			if (event.contentChanges.length && isManifest(event.document.uri)) queue(event.document.uri);
+		}),
+		vscode.workspace.onDidRenameFiles((event) => {
+			for (const file of event.files) {
+				queue(owner(file.oldUri.fsPath));
+				queue(owner(file.newUri.fsPath));
+			}
+		}),
 		{ dispose: () => clearTimeout(pending) },
 	);
 	void refreshAll();

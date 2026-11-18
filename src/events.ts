@@ -234,27 +234,58 @@ export class EventIndex {
 		this.engineEvents = new Set(data ? data.events.keys() : []);
 	}
 
+	private names: Map<string, Use[]> | undefined;
+	private dirty = false;
+
 	all(): Use[] {
 		return [...this.files.values()].flat();
 	}
 
-	update(uri: vscode.Uri, text: string): void {
+	update(uri: vscode.Uri, text: string): boolean {
+		const key = uri.toString();
 		const side = manifestSide(uri.fsPath);
-		this.files.set(uri.toString(), isJs(uri.fsPath) && !side ? [] : scan(uri, text, side, this.engineEvents));
+		const before = this.files.get(key);
+		const uses = isJs(uri.fsPath) && !side ? [] : scan(uri, text, side, this.engineEvents);
+		this.files.set(key, uses);
+		const relevant = uses.length > 0 || (before?.length ?? 0) > 0;
+		if (relevant) {
+			this.names = undefined;
+			this.dirty = true;
+		}
+		return relevant;
 	}
 
 	remove(uri: vscode.Uri): void {
-		this.files.delete(uri.toString());
+		const key = uri.toString();
+		if (this.files.get(key)?.length) {
+			this.names = undefined;
+			this.dirty = true;
+		}
+		this.files.delete(key);
 		this.collection.delete(uri);
+	}
+
+	private byName(name: string): Use[] {
+		if (!this.names) {
+			this.names = new Map();
+			for (const uses of this.files.values()) {
+				for (const use of uses) {
+					const list = this.names.get(use.name);
+					if (list) list.push(use);
+					else this.names.set(use.name, [use]);
+				}
+			}
+		}
+		return this.names.get(name) ?? [];
 	}
 
 	counterparts(use: Use): Use[] {
 		const wanted: Role = use.role === 'emit' ? 'handle' : 'emit';
-		return this.all().filter((u) => u.role === wanted && u.name === use.name && u.channels.some((c) => use.channels.includes(c)));
+		return this.byName(use.name).filter((u) => u.role === wanted && u.channels.some((c) => use.channels.includes(c)));
 	}
 
 	same(use: Use): Use[] {
-		return this.all().filter((u) => u.name === use.name && u.channels.some((c) => use.channels.includes(c)));
+		return this.byName(use.name).filter((u) => u.channels.some((c) => use.channels.includes(c)));
 	}
 
 	at(document: vscode.TextDocument, position: vscode.Position): Use | undefined {
@@ -263,6 +294,8 @@ export class EventIndex {
 	}
 
 	diagnose(): void {
+		if (!this.dirty) return;
+		this.dirty = false;
 		this.changed.fire();
 		const byFile = new Map<string, vscode.Diagnostic[]>();
 		const handled = this.all().filter((u) => u.role === 'handle');
@@ -324,7 +357,10 @@ export function registerEventIndex(context: vscode.ExtensionContext, library: ()
 	let pending: NodeJS.Timeout | undefined;
 	const diagnoseSoon = (): void => {
 		clearTimeout(pending);
-		pending = setTimeout(() => index.diagnose(), 250);
+		pending = setTimeout(() => {
+			flush();
+			index.diagnose();
+		}, 300);
 	};
 	const indexFile = async (uri: vscode.Uri): Promise<void> => {
 		const open = vscode.workspace.textDocuments.find((d) => d.uri.toString() === uri.toString());
@@ -340,9 +376,18 @@ export function registerEventIndex(context: vscode.ExtensionContext, library: ()
 		index.diagnose();
 	};
 
-	const isScript = (uri: vscode.Uri): boolean => uri.scheme === 'file' && /\.(?:lua|m?js|cjs)$/i.test(uri.fsPath);
+	const ignored = /[\\/](?:node_modules|\.git|docs|dist)[\\/]/i;
+	const isScript = (uri: vscode.Uri): boolean => uri.scheme === 'file' && /\.(?:lua|m?js|cjs)$/i.test(uri.fsPath) && !ignored.test(uri.fsPath);
+	const typing = new Map<string, vscode.TextDocument>();
+	const flush = (): void => {
+		if (!typing.size) return;
+		ensureData();
+		for (const document of typing.values()) index.update(document.uri, document.getText());
+		typing.clear();
+	};
 	const watcher = vscode.workspace.createFileSystemWatcher('**/*.{lua,js,mjs,cjs,json}');
 	const onFile = (uri: vscode.Uri): void => {
+		if (ignored.test(uri.fsPath)) return;
 		if (path.basename(uri.fsPath).toLowerCase() === 'manifest.json') return void indexAll();
 		if (!isScript(uri)) return;
 		void indexFile(uri).then(diagnoseSoon);
@@ -361,25 +406,27 @@ export function registerEventIndex(context: vscode.ExtensionContext, library: ()
 			}
 		}),
 		vscode.workspace.onDidChangeTextDocument((event) => {
-			if (!isScript(event.document.uri)) return;
-			ensureData();
-			index.update(event.document.uri, event.document.getText());
+			if (!event.contentChanges.length || !isScript(event.document.uri)) return;
+			typing.set(event.document.uri.toString(), event.document);
 			diagnoseSoon();
 		}),
 		vscode.languages.registerDefinitionProvider(selector, {
 			provideDefinition(document, position) {
+				flush();
 				const use = index.at(document, position);
 				return use ? index.counterparts(use).map((u) => index.location(u)) : undefined;
 			},
 		}),
 		vscode.languages.registerReferenceProvider(selector, {
 			provideReferences(document, position) {
+				flush();
 				const use = index.at(document, position);
 				return use ? index.same(use).map((u) => index.location(u)) : undefined;
 			},
 		}),
 		vscode.languages.registerHoverProvider(selector, {
 			provideHover(document, position) {
+				flush();
 				const use = index.at(document, position);
 				if (!use) return undefined;
 				const others = index.same(use);
