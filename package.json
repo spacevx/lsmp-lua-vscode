@@ -71,23 +71,23 @@
             "never"
           ],
           "default": "auto",
-          "markdownDescription": "`auto`: configure the Lua language server when the workspace holds an LS:MP resource (a `manifest.json` with `client_scripts`, `server_scripts` or `shared_scripts`). `always` / `never` force it."
+          "markdownDescription": "`auto`: when a `manifest.json` lists scripts. `always` / `never` force it."
         },
         "lsmp.natives": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Add the GTA V natives (client-side camelCase globals) to the completion."
+          "markdownDescription": "Include the GTA V natives."
         },
         "lsmp.autoUpdate": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Check lsmp.gg for a new `sdk.json` / `natives.json` when an LS:MP workspace opens and then every `#lsmp.updateIntervalHours#` hours, and regenerate the definitions when they changed. Run **LS:MP: Update definitions from lsmp.gg** to check now."
+          "markdownDescription": "Update the definitions from lsmp.gg automatically."
         },
         "lsmp.updateIntervalHours": {
           "type": "number",
           "default": 1,
           "minimum": 0,
-          "markdownDescription": "Hours between two checks while VS Code stays open. `0`: check only when an LS:MP workspace opens. An unchanged file costs a few hundred bytes (`304 Not Modified`)."
+          "markdownDescription": "Hours between checks. `0`: only when a workspace opens."
         }
       }
     },
