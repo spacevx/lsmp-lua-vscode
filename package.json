@@ -3,8 +3,8 @@
   "displayName": "LS:MP Lua",
   "description": "IntelliSense for LS:MP",
   "version": "0.1.0",
-  "publisher": "space",
-  "license": "MIT",
+  "publisher": "spacev",
+  "icon": "images/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/spacevx/lsmp-lua-vscode"
