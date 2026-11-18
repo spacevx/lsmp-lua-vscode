@@ -50,6 +50,11 @@
         "category": "LS:MP"
       },
       {
+        "command": "lsmp.whatsChanged",
+        "title": "What's changed",
+        "category": "LS:MP"
+      },
+      {
         "command": "lsmp.searchApi",
         "title": "Search the API documentation",
         "category": "LS:MP"

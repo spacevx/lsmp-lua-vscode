@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { snapshot } from '../changes';
 import { generateNatives } from './natives';
 import { generateSdk, type SdkStats } from './sdk';
 import type { Natives, Sdk } from './schema';
@@ -83,6 +84,7 @@ export function generate(sdk: Sdk, natives: Natives, runtime: string, out: strin
 	const nativeCount = generateNatives(natives, out);
 	writeSides(natives, out);
 	writeReturns(natives, out);
+	fs.writeFileSync(path.join(out, 'snapshot.json'), JSON.stringify(snapshot(sdk, natives)));
 	const stamp = stampOf(out);
 	fs.writeFileSync(path.join(out, 'stamp'), stamp);
 	return { ...stats, natives: nativeCount, namespaces: natives.namespaces.length, stamp };

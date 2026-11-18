@@ -2,10 +2,12 @@ import { randomBytes } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type * as vscode from 'vscode';
-import { generate, parseNatives, parseSdk, type Natives } from './generator';
+import { diff, summarize, type ChangeEntry, type Snapshot } from './changes';
+import { generate, parseNatives, parseSdk } from './generator';
 import { SOURCES, fetchSource, type SourceName, type Validator } from './sources';
 
 const KEEP_LIBRARIES = 2;
+const HISTORY = 30;
 
 interface State {
 	stamp?: string;
@@ -26,6 +28,7 @@ export class Definitions {
 	private readonly storage: string;
 	private readonly remote: string;
 	private readonly stateFile: string;
+	private readonly historyFile: string;
 	private readonly bundled: string;
 	private readonly runtimeFile: string;
 	private readonly version: string;
@@ -35,6 +38,7 @@ export class Definitions {
 		this.storage = context.globalStorageUri.fsPath;
 		this.remote = path.join(this.storage, 'remote');
 		this.stateFile = path.join(this.storage, 'state.json');
+		this.historyFile = path.join(this.storage, 'changes.json');
 		this.bundled = path.join(context.extensionUri.fsPath, 'library');
 		this.runtimeFile = path.join(context.extensionUri.fsPath, 'library-static', 'runtime.lua');
 		this.version = `${context.extension.packageJSON.version}+${readText(path.join(this.bundled, 'stamp')).trim()}`;
@@ -144,14 +148,14 @@ export class Definitions {
 			}
 
 			const previous = state.stamp ? this.libraryPath(state.stamp) : undefined;
-			const previousNatives = exists(this.remoteFile('natives')) ? readText(this.remoteFile('natives')) : undefined;
 			const stamp = this.build(texts.sdk as string, texts.natives as string);
 			for (const name of Object.keys(texts) as SourceName[]) fs.writeFileSync(this.remoteFile(name), texts[name] as string);
 			this.writeState({ stamp, extensionVersion: this.version, checkedAt: Date.now(), validators });
 			if (stamp === state.stamp) return { status: 'unchanged' };
 
+			const summary = this.record(previous, stamp, state.stamp);
 			this.cleanup(stamp, state.stamp);
-			return { status: 'updated', library: this.libraryPath(stamp), summary: this.summarize(previous, this.libraryPath(stamp), previousNatives, texts.natives as string) };
+			return { status: 'updated', library: this.libraryPath(stamp), summary };
 		} catch (error) {
 			const message = (error as Error).message;
 			this.log.appendLine(`update failed: ${message}`);
@@ -159,41 +163,30 @@ export class Definitions {
 		}
 	}
 
-	private summarize(previousLibrary: string | undefined, library: string, previousNatives: string | undefined, natives: string): string {
-		const apiNames = (dir: string | undefined): Set<string> => {
-			if (!dir || !exists(path.join(dir, 'api.json'))) return new Set();
-			return new Set((JSON.parse(readText(path.join(dir, 'api.json'))) as { name: string }[]).map((entry) => entry.name));
-		};
-		const nativeMap = (text: string | undefined): Map<string, string> => {
-			const map = new Map<string, string>();
-			if (!text) return map;
-			for (const ns of (JSON.parse(text) as Natives).namespaces) for (const n of ns.natives) map.set(n.name, JSON.stringify(n));
-			return map;
-		};
-
-		const before = apiNames(previousLibrary);
-		const after = apiNames(library);
-		const added = [...after].filter((name) => !before.has(name)).length;
-		const removed = [...before].filter((name) => !after.has(name)).length;
-		const oldNatives = nativeMap(previousNatives);
-		const newNatives = nativeMap(natives);
-		let nativesAdded = 0;
-		let nativesChanged = 0;
-		for (const [name, json] of newNatives) {
-			const old = oldNatives.get(name);
-			if (old === undefined) nativesAdded++;
-			else if (old !== json) nativesChanged++;
+	private snapshotOf(library: string | undefined): Snapshot | undefined {
+		try {
+			return library ? (JSON.parse(readText(path.join(library, 'snapshot.json'))) as Snapshot) : undefined;
+		} catch {
+			return undefined;
 		}
-		const nativesRemoved = [...oldNatives.keys()].filter((name) => !newNatives.has(name)).length;
+	}
 
-		const parts = [
-			added && `+${added} function${added > 1 ? 's' : ''}`,
-			removed && `−${removed} function${removed > 1 ? 's' : ''}`,
-			nativesAdded && `+${nativesAdded} native${nativesAdded > 1 ? 's' : ''}`,
-			nativesRemoved && `−${nativesRemoved} native${nativesRemoved > 1 ? 's' : ''}`,
-			nativesChanged && `${nativesChanged} native${nativesChanged > 1 ? 's' : ''} changed`,
-		].filter(Boolean);
-		return parts.length ? parts.join(', ') : 'documentation changes only';
+	history(): ChangeEntry[] {
+		try {
+			return JSON.parse(readText(this.historyFile)) as ChangeEntry[];
+		} catch {
+			return [];
+		}
+	}
+
+	private record(previous: string | undefined, stamp: string, from: string | undefined): string {
+		const before = this.snapshotOf(previous);
+		const after = this.snapshotOf(this.libraryPath(stamp));
+		if (!before || !after) return 'definitions changed';
+		const changes = diff(before, after);
+		const entry: ChangeEntry = { date: Date.now(), from: from ?? '', to: stamp, changes };
+		fs.writeFileSync(this.historyFile, JSON.stringify([entry, ...this.history()].slice(0, HISTORY)));
+		return summarize(changes);
 	}
 
 	private cleanup(current: string, previous: string | undefined): void {

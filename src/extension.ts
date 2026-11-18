@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import { registerManifestChecks } from './manifest';
 import { ServerController } from './server';
 import { registerSideChecks } from './sides';
+import { render } from './changes';
 import { registerEventIndex } from './events';
 import { EventTypes } from './eventTypes';
 import { Definitions, type UpdateOutcome } from './updater';
@@ -70,12 +71,19 @@ async function onUpdate(outcome: UpdateOutcome, manual: boolean): Promise<void> 
 	if (outcome.status === 'updated') {
 		library = outcome.library;
 		if (await isLsmpWorkspace()) await apply();
-		vscode.window.showInformationMessage(`LS:MP: definitions updated from lsmp.gg (${outcome.summary}).`);
+		const choice = await vscode.window.showInformationMessage(`LS:MP: definitions updated from lsmp.gg (${outcome.summary}).`, "What's changed");
+		if (choice) await whatsChanged();
 	} else if (manual && outcome.status === 'unchanged') {
 		vscode.window.showInformationMessage('LS:MP: definitions are up to date.');
 	} else if (manual && outcome.status === 'failed') {
 		vscode.window.showWarningMessage(`LS:MP: update failed (${outcome.error}). Keeping the current definitions.`);
 	}
+}
+
+async function whatsChanged(): Promise<void> {
+	const file = path.join(definitions.storagePath, 'whats-changed.md');
+	fs.writeFileSync(file, render(definitions.history()));
+	await vscode.commands.executeCommand('markdown.showPreview', vscode.Uri.file(file));
 }
 
 async function updateNow(): Promise<void> {
@@ -157,6 +165,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 			vscode.window.showInformationMessage('LS:MP Lua disabled for this workspace.');
 		}),
 		vscode.commands.registerCommand('lsmp.updateDefinitions', updateNow),
+		vscode.commands.registerCommand('lsmp.whatsChanged', whatsChanged),
 		vscode.commands.registerCommand('lsmp.searchApi', searchApi),
 		vscode.commands.registerCommand('lsmp.openDocs', () => vscode.env.openExternal(vscode.Uri.parse(DOCS))),
 		vscode.workspace.onDidChangeConfiguration(async (event) => {
