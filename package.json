@@ -76,12 +76,12 @@
         "lsmp.natives": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Include the GTA V natives."
+          "markdownDescription": "Include GTA V natives."
         },
         "lsmp.autoUpdate": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Update the definitions from lsmp.gg automatically."
+          "markdownDescription": "Update definitions from lsmp.gg automatically."
         },
         "lsmp.updateIntervalHours": {
           "type": "number",
