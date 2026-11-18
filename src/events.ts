@@ -6,7 +6,12 @@ import { load, manifestSide, mask, type Data } from './sides';
 type Role = 'emit' | 'handle';
 type FileSide = 'server' | 'client' | 'shared' | undefined;
 
-interface Use {
+export interface Span {
+	start: number;
+	end: number;
+}
+
+export interface Use {
 	uri: vscode.Uri;
 	start: number;
 	end: number;
@@ -14,6 +19,9 @@ interface Use {
 	role: Role;
 	channels: string[];
 	fn: string;
+	side: FileSide;
+	args: Span[];
+	params: string[];
 }
 
 interface Kind {
@@ -59,6 +67,33 @@ function argumentStart(code: string, from: number, index: number): number | unde
 		} else if (char === ',' && depth === 0) arg++;
 	}
 	return undefined;
+}
+
+function argumentsOf(code: string, from: number): Span[] {
+	const spans: Span[] = [];
+	let depth = 0;
+	let start = from;
+	for (let i = from; i < code.length; i++) {
+		const char = code[i];
+		if ('({['.includes(char)) depth++;
+		else if (')}]'.includes(char)) {
+			if (depth === 0) {
+				if (code.slice(start, i).trim()) spans.push(trimSpan(code, start, i));
+				return spans;
+			}
+			depth--;
+		} else if (char === ',' && depth === 0) {
+			spans.push(trimSpan(code, start, i));
+			start = i + 1;
+		}
+	}
+	return spans;
+}
+
+function trimSpan(code: string, start: number, end: number): Span {
+	while (start < end && /\s/.test(code[start])) start++;
+	while (end > start && /\s/.test(code[end - 1])) end--;
+	return { start, end };
 }
 
 function nameAt(text: string, code: string, at: number): { start: number; end: number; name: string } | undefined {
@@ -116,7 +151,15 @@ export function scan(uri: vscode.Uri, text: string, side: FileSide, engineEvents
 		const found = nameAt(text, code, at);
 		if (!found) continue;
 		if ((fn === 'on' || fn === 'once' || fn === 'off') && engineEvents.has(found.name)) continue;
-		uses.push({ uri, ...found, role: kind.role, channels: kind.channels(side), fn });
+		const all = argumentsOf(code, m.index + m[0].length);
+		const nameIndex = all.findIndex((span) => found.start >= span.start && found.start < span.end);
+		const args = kind.role === 'emit' && nameIndex >= 0 ? all.slice(nameIndex + 1) : [];
+		let params: string[] = [];
+		if (kind.role === 'handle' && nameIndex >= 0 && all[nameIndex + 1]) {
+			const handler = /^function\s*\(([^)]*)\)/.exec(code.slice(all[nameIndex + 1].start, all[nameIndex + 1].end));
+			if (handler) params = handler[1].split(',').map((p) => p.trim()).filter(Boolean);
+		}
+		uses.push({ uri, ...found, role: kind.role, channels: kind.channels(side), fn, side, args, params });
 	}
 	return uses;
 }
@@ -141,12 +184,14 @@ export class EventIndex {
 	private readonly files = new Map<string, Use[]>();
 	private readonly collection = vscode.languages.createDiagnosticCollection('lsmp-events');
 	private engineEvents = new Set<string>();
+	private readonly changed = new vscode.EventEmitter<void>();
+	readonly onDidChange = this.changed.event;
 
 	setData(data: Data | undefined): void {
 		this.engineEvents = new Set(data ? data.events.keys() : []);
 	}
 
-	private all(): Use[] {
+	all(): Use[] {
 		return [...this.files.values()].flat();
 	}
 
@@ -175,6 +220,7 @@ export class EventIndex {
 	}
 
 	diagnose(): void {
+		this.changed.fire();
 		const byFile = new Map<string, vscode.Diagnostic[]>();
 		const handled = this.all().filter((u) => u.role === 'handle');
 		for (const [key, uses] of this.files) {
@@ -217,12 +263,13 @@ export class EventIndex {
 	}
 
 	dispose(): void {
+		this.changed.dispose();
 		this.collection.dispose();
 	}
 
 }
 
-export function registerEventIndex(context: vscode.ExtensionContext, library: () => string): void {
+export function registerEventIndex(context: vscode.ExtensionContext, library: () => string): EventIndex {
 	const index = new EventIndex();
 	let loadedFrom = '';
 	const ensureData = (): void => {
@@ -309,4 +356,5 @@ export function registerEventIndex(context: vscode.ExtensionContext, library: ()
 		{ dispose: () => clearTimeout(pending) },
 	);
 	void indexAll();
+	return index;
 }

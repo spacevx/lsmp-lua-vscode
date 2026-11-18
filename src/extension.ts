@@ -5,6 +5,7 @@ import { registerManifestChecks } from './manifest';
 import { ServerController } from './server';
 import { registerSideChecks } from './sides';
 import { registerEventIndex } from './events';
+import { EventTypes } from './eventTypes';
 import { Definitions, type UpdateOutcome } from './updater';
 
 const DOCS = 'https://lsmp.gg/resources/api';
@@ -60,7 +61,7 @@ async function apply(): Promise<void> {
 
 async function remove(): Promise<void> {
 	const lua = vscode.workspace.getConfiguration('Lua');
-	for (const key of ['workspace.library', 'runtime.version', 'workspace.checkThirdParty', 'workspace.ignoreDir']) {
+	for (const key of ['workspace.library', 'runtime.version', 'workspace.checkThirdParty', 'workspace.ignoreDir', 'runtime.plugin', 'runtime.pluginArgs']) {
 		await lua.update(key, undefined, Target.Workspace);
 	}
 }
@@ -115,6 +116,20 @@ function scheduleUpdates(): void {
 	updateTimer = setInterval(checkForUpdates, hours * 60 * 60 * 1000);
 }
 
+async function startEventTypes(context: vscode.ExtensionContext, events: ReturnType<typeof registerEventIndex>, log: vscode.OutputChannel): Promise<void> {
+	const storage = context.globalStorageUri.fsPath;
+	fs.mkdirSync(storage, { recursive: true });
+	const plugin = path.join(storage, 'lsmp-types.lua');
+	fs.copyFileSync(path.join(context.extensionUri.fsPath, 'plugin', 'lsmp-types.lua'), plugin);
+	const typesFile = path.join(context.storageUri?.fsPath ?? storage, 'event-types.json');
+	const lua = vscode.workspace.getConfiguration('Lua');
+	const setArgs = (version: number): Thenable<void> => lua.update('runtime.pluginArgs', [typesFile, String(version)], Target.Workspace);
+	if (lua.inspect<string>('runtime.plugin')?.workspaceValue !== plugin) await lua.update('runtime.plugin', plugin, Target.Workspace);
+	const current = lua.inspect<string[]>('runtime.pluginArgs')?.workspaceValue;
+	if (!current || current[0] !== typesFile) await setArgs(Date.now());
+	context.subscriptions.push(new EventTypes(events, () => library, typesFile, async () => setArgs(Date.now()), log));
+}
+
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
 	const log = vscode.window.createOutputChannel('LS:MP Lua');
 	definitions = new Definitions(context, log);
@@ -122,7 +137,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	const server = new ServerController(log);
 	registerManifestChecks(context);
 	registerSideChecks(context, () => library);
-	registerEventIndex(context, () => library);
+	const events = registerEventIndex(context, () => library);
 
 	context.subscriptions.push(
 		log,
@@ -154,6 +169,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	if (!(await isLsmpWorkspace())) return;
 	lsmpWorkspace = true;
 	await apply();
+	if (settings().get<boolean>('eventTypes', true)) await startEventTypes(context, events, log);
 	if (settings().get<boolean>('autoUpdate', true)) checkForUpdates();
 	scheduleUpdates();
 }
