@@ -121,7 +121,7 @@
         "lsmp.eventTypes": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Type event handler parameters from what their emitters send."
+          "markdownDescription": "Infer event handler parameters and call results."
         }
       }
     },

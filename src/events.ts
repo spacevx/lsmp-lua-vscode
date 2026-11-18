@@ -22,6 +22,7 @@ export interface Use {
 	side: FileSide;
 	args: Span[];
 	params: string[];
+	returns: Span[];
 }
 
 interface Kind {
@@ -96,6 +97,46 @@ function trimSpan(code: string, start: number, end: number): Span {
 	return { start, end };
 }
 
+const BLOCK = /\b(function|if|do|repeat|end|until|return|else|elseif)\b/g;
+
+function firstValue(expr: string): string {
+	let depth = 0;
+	let quote = '';
+	for (let i = 0; i < expr.length; i++) {
+		const char = expr[i];
+		if (quote) {
+			if (char === quote) quote = '';
+		} else if (char === '"' || char === "'") quote = char;
+		else if ('([{'.includes(char)) depth++;
+		else if (')]}'.includes(char)) depth--;
+		else if (char === ',' && depth === 0) return expr.slice(0, i);
+	}
+	return expr;
+}
+
+export function handlerReturns(code: string, start: number): Span[] {
+	const stack: string[] = [];
+	const spans: Span[] = [];
+	let pendingReturn: number | undefined;
+	BLOCK.lastIndex = start;
+	for (let m = BLOCK.exec(code); m; m = BLOCK.exec(code)) {
+		const word = m[1];
+		if (pendingReturn !== undefined && ['end', 'until', 'else', 'elseif'].includes(word)) {
+			const expr = code.slice(pendingReturn, m.index);
+			const first = firstValue(expr);
+			spans.push(trimSpan(code, pendingReturn, pendingReturn + first.length));
+			pendingReturn = undefined;
+		}
+		if (word === 'function') stack.push('function');
+		else if (word === 'if' || word === 'do' || word === 'repeat') stack.push('block');
+		else if (word === 'end' || word === 'until') {
+			stack.pop();
+			if (!stack.length) break;
+		} else if (word === 'return' && stack.filter((k) => k === 'function').length === 1) pendingReturn = m.index + m[0].length;
+	}
+	return spans.filter((span) => span.end > span.start);
+}
+
 function nameAt(text: string, code: string, at: number): { start: number; end: number; name: string } | undefined {
 	let i = at;
 	if (code[i] === '{') {
@@ -155,11 +196,13 @@ export function scan(uri: vscode.Uri, text: string, side: FileSide, engineEvents
 		const nameIndex = all.findIndex((span) => found.start >= span.start && found.start < span.end);
 		const args = kind.role === 'emit' && nameIndex >= 0 ? all.slice(nameIndex + 1) : [];
 		let params: string[] = [];
+		let returns: Span[] = [];
 		if (kind.role === 'handle' && nameIndex >= 0 && all[nameIndex + 1]) {
 			const handler = /^function\s*\(([^)]*)\)/.exec(code.slice(all[nameIndex + 1].start, all[nameIndex + 1].end));
 			if (handler) params = handler[1].split(',').map((p) => p.trim()).filter(Boolean);
+			if (handler && fn === 'onCall' && !isJs(uri.fsPath)) returns = handlerReturns(code, all[nameIndex + 1].start);
 		}
-		uses.push({ uri, ...found, role: kind.role, channels: kind.channels(side), fn, side, args, params });
+		uses.push({ uri, ...found, role: kind.role, channels: kind.channels(side), fn, side, args, params, returns });
 	}
 	return uses;
 }

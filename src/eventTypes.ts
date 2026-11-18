@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import type { EventIndex, Use } from './events';
+import type { EventIndex, Span, Use } from './events';
 
 type TypeMap = Record<string, Record<string, (string | null)[]>>;
 
@@ -9,6 +9,7 @@ const VECTORS = new Set(['vector2', 'vector3', 'vector4', 'quaternion']);
 const SAME_TYPE_METHODS = new Set(['normalize', 'cross', 'lerp', 'add', 'sub', 'mul', 'inverse', 'conjugate']);
 const NUMBER_METHODS = new Set(['length', 'length2', 'distance', 'distance2', 'dot']);
 const ALIASES: Record<string, string> = { Vector2: 'vector2', Vector3: 'vector3', Vector4: 'vector4', Quaternion: 'quaternion' };
+const CALLERS = new Set(['call', 'callServer', 'callClient']);
 const HANDLERS = new Set(['onClient', 'onServer', 'on', 'once', 'onCall']);
 const VALID_TYPE = /^[\w.?|\[\]{}<>:, ]+$/;
 
@@ -145,7 +146,7 @@ export class Inferrer {
 
 		if (/^[A-Za-z_]\w*$/.test(expr)) {
 			const before = text.slice(0, offset);
-			const assignment = new RegExp(`(?:^|[^\\w.:])(?:local\\s+)?${expr}\\s*(?:<\\w+>)?\\s*=(?!=)\\s*([^\\n]+)`, 'g');
+			const assignment = new RegExp(`(?:^|[\\n;]|\\b(?:then|do|else)\\b)[ \\t]*(?:local[ \\t]+)?${expr}[ \\t]*(?:<\\w+>)?[ \\t]*=(?!=)[ \\t]*([^\\n]+)`, 'g');
 			let last: RegExpExecArray | undefined;
 			for (const m of before.matchAll(assignment)) last = m as RegExpExecArray;
 			if (last) {
@@ -180,6 +181,8 @@ function hoverType(hovers: vscode.Hover[] | undefined): string | undefined {
 	const type = (firstLine.startsWith('function') ? returned : declared)?.replace(/\s*=\s*.*$/, '');
 	return type && type !== 'unknown' && type !== 'any' && type.length < 200 && VALID_TYPE.test(type) ? normalize(type) : undefined;
 }
+
+const unionOf = (types: Set<string>): string => [...types].sort((x, y) => Number(x === 'nil') - Number(y === 'nil')).join('|');
 
 const isReference = (expr: string): boolean => /^[A-Za-z_][\w]*(?:\s*\.\s*[A-Za-z_]\w*)*$/.test(expr.trim());
 
@@ -245,15 +248,18 @@ export class EventTypes implements vscode.Disposable {
 
 	private async argType(emitter: Use, index: number, inferrer: Inferrer, cache: Map<string, string>): Promise<string | undefined> {
 		const span = emitter.args[index];
-		if (!span) return 'nil';
-		const text = this.text(emitter.uri, cache);
+		return span ? this.exprType(emitter.uri, span, inferrer, cache) : 'nil';
+	}
+
+	private async exprType(uri: vscode.Uri, span: Span, inferrer: Inferrer, cache: Map<string, string>): Promise<string | undefined> {
+		const text = this.text(uri, cache);
 		const expr = text.slice(span.start, span.end);
-		const lua = /\.lua$/i.test(emitter.uri.fsPath);
+		const lua = /\.lua$/i.test(uri.fsPath);
 		const hover = async (): Promise<string | undefined> => {
 			if (!lua) return undefined;
-			const document = await vscode.workspace.openTextDocument(emitter.uri);
+			const document = await vscode.workspace.openTextDocument(uri);
 			const at = expr.endsWith(')') ? span.start + matchingOpen(expr, expr.length - 1) - 1 : span.end - 1;
-			return hoverType(await vscode.commands.executeCommand<vscode.Hover[]>('vscode.executeHoverProvider', emitter.uri, document.positionAt(Math.max(span.start, at))));
+			return hoverType(await vscode.commands.executeCommand<vscode.Hover[]>('vscode.executeHoverProvider', uri, document.positionAt(Math.max(span.start, at))));
 		};
 		if (isReference(expr)) {
 			const fromLuaLS = await hover();
@@ -294,6 +300,24 @@ export class EventTypes implements vscode.Disposable {
 			if (!types.some(Boolean)) continue;
 			const file = handler.uri.toString().toLowerCase();
 			(map[file] ??= {})[`${handler.fn}|${handler.name}`] = types;
+		}
+		for (const caller of this.index.all()) {
+			if (caller.role !== 'emit' || !CALLERS.has(caller.fn) || !/.lua$/i.test(caller.uri.fsPath)) continue;
+			const handlers = this.index.counterparts(caller).filter((h) => h.fn === 'onCall' && h.returns);
+			if (!handlers.length) continue;
+			const found = new Set<string>();
+			let unknown = false;
+			for (const handler of handlers) {
+				if (!handler.returns.length) found.add('nil');
+				for (const span of handler.returns) {
+					const type = await this.exprType(handler.uri, span, inferrer, cache);
+					if (type) found.add(type);
+					else unknown = true;
+				}
+			}
+			if (unknown || !found.size) continue;
+			const file = caller.uri.toString().toLowerCase();
+			(map[file] ??= {})[`call|${caller.name}`] = [unionOf(found)];
 		}
 		return map;
 	}

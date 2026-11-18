@@ -49,5 +49,13 @@ function OnSetText(uri, text)
 			end
 		end
 	end
+	for at, vars, _, name in text:gmatch('()local%s+([%a_][%w_]*[%s,%w_<>]-)%s*=%s*lsmp%s*%.%s*call%a*%s*%([^"\'\n]-(["\'])([^"\'\n]-)%3') do
+		local types = entries['call|' .. name]
+		if types and type(types[1]) == 'string' then
+			local annotation = vars:find(',') and (types[1] .. ', string?') or types[1]
+			diffs[#diffs + 1] = { start = at, finish = at - 1, text = '---@type ' .. annotation .. '\n' }
+		end
+	end
+	table.sort(diffs, function(a, b) return a.start < b.start end)
 	return #diffs > 0 and diffs or nil
 end
