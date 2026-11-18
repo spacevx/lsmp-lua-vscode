@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import { registerManifestChecks } from './manifest';
 import { ServerController } from './server';
 import { registerSideChecks } from './sides';
+import { registerEventIndex } from './events';
 import { Definitions, type UpdateOutcome } from './updater';
 
 const DOCS = 'https://lsmp.gg/resources/api';
@@ -121,6 +122,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 	const server = new ServerController(log);
 	registerManifestChecks(context);
 	registerSideChecks(context, () => library);
+	registerEventIndex(context, () => library);
 
 	context.subscriptions.push(
 		log,
