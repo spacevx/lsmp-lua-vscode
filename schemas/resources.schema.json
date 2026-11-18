@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LS:MP operator settings (resources.json)",
+  "description": "Next to server.cfg: what the server's operator decides about each resource. Read once, at server start. https://lsmp.gg/resources/api#operator-settings",
+  "type": "object",
+  "properties": {
+    "resources": {
+      "type": "object",
+      "description": "Keyed by resource name; a marketplace mod is keyed mod.<name>.",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean", "default": true, "description": "false: not packed, not started, not sent to players." },
+          "sandbox": { "type": "boolean", "default": true, "description": "false trusts the resource: full machine access and lsmp.mysql. Only for code you trust." },
+          "clientMount": { "enum": ["auto", "manual", "never"], "default": "auto", "description": "auto: mounted as players join; manual: downloaded, mounted by lsmp.mountResource; never: not sent to players." },
+          "after": { "type": "array", "items": { "type": "string" }, "default": [], "description": "Resources to start before this one, on top of its own dependencies." }
+        }
+      }
+    }
+  }
+}

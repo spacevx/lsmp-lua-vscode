@@ -1,0 +1,7 @@
+src/**
+data/**
+node_modules/**
+tsconfig.json
+dist/cli.js
+.git/**
+*.vsix

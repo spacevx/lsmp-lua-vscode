@@ -1,0 +1,131 @@
+{
+  "name": "lsmp-lua-vscode",
+  "displayName": "LS:MP Lua",
+  "description": "IntelliSense for LS:MP",
+  "version": "0.1.0",
+  "publisher": "space",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/spacevx/lsmp-lua-vscode"
+  },
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Snippets"
+  ],
+  "keywords": [
+    "Lua",
+    "LS:MP",
+    "LSMP",
+    "GTA V",
+    "IntelliSense"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "workspaceContains:**/manifest.json",
+    "onLanguage:lua"
+  ],
+  "extensionDependencies": [
+    "sumneko.lua"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "lsmp.enable",
+        "title": "Enable for this workspace",
+        "category": "LS:MP"
+      },
+      {
+        "command": "lsmp.disable",
+        "title": "Disable for this workspace",
+        "category": "LS:MP"
+      },
+      {
+        "command": "lsmp.updateDefinitions",
+        "title": "Update definitions from lsmp.gg",
+        "category": "LS:MP"
+      },
+      {
+        "command": "lsmp.searchApi",
+        "title": "Search the API documentation",
+        "category": "LS:MP"
+      },
+      {
+        "command": "lsmp.openDocs",
+        "title": "Open the SDK reference",
+        "category": "LS:MP"
+      }
+    ],
+    "configuration": {
+      "title": "LS:MP Lua",
+      "properties": {
+        "lsmp.enable": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "always",
+            "never"
+          ],
+          "default": "auto",
+          "markdownDescription": "`auto`: configure the Lua language server when the workspace holds an LS:MP resource (a `manifest.json` with `client_scripts`, `server_scripts` or `shared_scripts`). `always` / `never` force it."
+        },
+        "lsmp.natives": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Add the GTA V natives (client-side camelCase globals) to the completion."
+        },
+        "lsmp.autoUpdate": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Check lsmp.gg for a new `sdk.json` / `natives.json` when an LS:MP workspace opens and then every `#lsmp.updateIntervalHours#` hours, and regenerate the definitions when they changed. Run **LS:MP: Update definitions from lsmp.gg** to check now."
+        },
+        "lsmp.updateIntervalHours": {
+          "type": "number",
+          "default": 1,
+          "minimum": 0,
+          "markdownDescription": "Hours between two checks while VS Code stays open. `0`: check only when an LS:MP workspace opens. An unchanged file costs a few hundred bytes (`304 Not Modified`)."
+        }
+      }
+    },
+    "snippets": [
+      {
+        "language": "lua",
+        "path": "./snippets/lua.json"
+      }
+    ],
+    "jsonValidation": [
+      {
+        "fileMatch": [
+          "**/resources/*/manifest.json",
+          "**/resources/**/manifest.json",
+          "**/LSMP/resources/*/manifest.json"
+        ],
+        "url": "./schemas/manifest.schema.json"
+      },
+      {
+        "fileMatch": [
+          "**/resources.json"
+        ],
+        "url": "./schemas/resources.schema.json"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "fetch": "npm run build && node dist/cli.js fetch",
+    "generate": "npm run build && node dist/cli.js generate",
+    "typecheck": "tsc -p . --noEmit",
+    "vscode:prepublish": "npm run build && node dist/cli.js fetch && node dist/cli.js generate",
+    "package": "vsce package --no-dependencies --skip-license"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/vscode": "1.80.0",
+    "@vscode/vsce": "3.6.0",
+    "typescript": "5.9.3"
+  }
+}

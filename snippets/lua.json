@@ -1,0 +1,47 @@
+{
+  "Engine event": {
+    "prefix": "lsmpon",
+    "body": ["lsmp.on(\"${1|playerJoin,playerLeave,playerSpawn,playerDeath,resourceStart,resourceStop,serverStart,serverStop,metaChange,playerDimensionChange,entityStreamIn,entityStreamOut|}\", function(${2:...})", "\t$0", "end)"],
+    "description": "lsmp.on: listen to an engine event or a local event"
+  },
+  "Client event (server)": {
+    "prefix": "lsmponclient",
+    "body": ["lsmp.onClient(\"${1:res}:${2:name}\", function(source, ${3:arg})", "\t-- source is safe; everything else comes from the client: check it", "\tif type(${3:arg}) ~= \"${4:string}\" then return end", "\t$0", "end)"],
+    "description": "lsmp.onClient: event sent by a client (server side)"
+  },
+  "Server event (client)": {
+    "prefix": "lsmponserver",
+    "body": ["lsmp.onServer(\"${1:res}:${2:name}\", function(${3:...})", "\t$0", "end)"],
+    "description": "lsmp.onServer: event sent by the server (client side)"
+  },
+  "Remote call handler": {
+    "prefix": "lsmponcall",
+    "body": ["lsmp.onCall(\"${1:res}:${2:name}\", function(${3:source}, ${4:arg})", "\t$0", "\treturn ${5:nil}", "end)"],
+    "description": "lsmp.onCall: answer lsmp.call / callServer / callClient (server handler: source first, nil for a local call)"
+  },
+  "Call the server": {
+    "prefix": "lsmpcallserver",
+    "body": ["local ${1:res}, err = lsmp.callServer(\"${2:res}:${3:name}\"${4:, arg})", "if not ${1:res} then", "\tlsmp.warn(\"${3:name} failed: \" .. err)", "\treturn", "end", "$0"],
+    "description": "lsmp.callServer inside a host coroutine (file body, handler, lsmp.createThread)"
+  },
+  "Command": {
+    "prefix": "lsmpcmd",
+    "body": ["lsmp.registerCommand(\"${1:name}\", {", "\thelp = \"${2:What it does}\",", "\tpermission = ${3:false},", "}, function(args, raw, source)", "\t-- not a host coroutine: wrap waits in lsmp.createThread", "\t$0", "end)"],
+    "description": "lsmp.registerCommand (server console / F8)"
+  },
+  "Thread": {
+    "prefix": "lsmpthread",
+    "body": ["lsmp.createThread(function()", "\twhile true do", "\t\t$0", "\t\tlsmp.wait(${1:1000})", "\tend", "end)"],
+    "description": "lsmp.createThread with a lsmp.wait loop"
+  },
+  "Client script guard": {
+    "prefix": "lsmpmp",
+    "body": ["if lsmp.gameType() ~= \"MP\" then return end", "$0"],
+    "description": "Skip a client script in Story mode and marketplace trials"
+  },
+  "Web page": {
+    "prefix": "lsmpbrowser",
+    "body": ["local ui = lsmp.createBrowser(\"rsc://${1:res}/index.html\", { visible = false })", "if not ui then return lsmp.error(\"browser: \" .. tostring(lsmp.getLastError())) end", "", "local function setOpen(open)", "\tui:setVisible(open)", "\tui:setFocus(open)", "end", "", "ui:on(\"close\", function() setOpen(false) end)", "ui:on(\"focusLost\", function() setOpen(false) end)", "$0"],
+    "description": "lsmp.createBrowser with open/close and focus handling"
+  }
+}

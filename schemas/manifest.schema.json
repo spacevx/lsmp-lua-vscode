@@ -1,0 +1,84 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LS:MP resource manifest",
+  "description": "manifest.json of an LS:MP resource. The resource's name is its folder name. https://lsmp.gg/resources/api#resource-layout",
+  "type": "object",
+  "additionalProperties": false,
+  "definitions": {
+    "paths": {
+      "description": "A path or pattern relative to the resource folder, with /, or a list of them. * matches within one folder, ** at any depth, ? one character.",
+      "oneOf": [
+        { "type": "string", "minLength": 1 },
+        { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      ]
+    },
+    "names": {
+      "description": "A resource name, or a list of them.",
+      "oneOf": [
+        { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$" },
+        { "type": "array", "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$" } }
+      ]
+    }
+  },
+  "properties": {
+    "$schema": { "type": "string" },
+    "title": { "type": "string", "maxLength": 64, "description": "Display name (admin panel, marketplace). Never an identity." },
+    "description": { "type": "string", "maxLength": 1024, "description": "Display only." },
+    "author": { "type": "string", "maxLength": 128, "description": "Display only." },
+    "version": { "type": "string", "maxLength": 64, "description": "Display only. Marketplace versions are managed by lsmp.gg." },
+    "shared_scripts": { "$ref": "#/definitions/paths", "description": "Scripts run on both sides, before the side-specific ones (.lua or .js)." },
+    "server_scripts": { "$ref": "#/definitions/paths", "description": "Scripts run on the server (.lua, .js, .mjs, .cjs). Never sent to players." },
+    "client_scripts": { "$ref": "#/definitions/paths", "description": "Scripts run in each player's game (.lua or .js), in this order." },
+    "files": { "$ref": "#/definitions/paths", "description": "Extra files sent to players, not run: data read with lsmp.readResourceFile." },
+    "webui": { "$ref": "#/definitions/paths", "description": "Folders served to the resource's pages at rsc://<name>/ (the built output, e.g. \"web\" or \"ui/dist\")." },
+    "dependencies": { "$ref": "#/definitions/names", "description": "Resources that must be started first, on both sides." },
+    "server_dependencies": { "$ref": "#/definitions/names", "description": "Resources that must be started first, on the server only." },
+    "client_dependencies": { "$ref": "#/definitions/names", "description": "Resources that must be started first, in the player's game only." },
+    "data_files": {
+      "type": "array",
+      "description": "Game data files mounted in the player's game with the resource.",
+      "items": {
+        "oneOf": [
+          { "type": "string", "description": "A file whose type is known from its name: vehicles.meta, handling.meta, carcols.meta, carvariations.meta, vehiclelayouts.meta, weapons.meta, peds.meta, water.xml, dlctext.meta..." },
+          {
+            "type": "object",
+            "required": ["path"],
+            "additionalProperties": false,
+            "properties": {
+              "path": { "type": "string", "description": "The file, relative to the resource." },
+              "type": { "type": "string", "description": "The game's data file type (VEHICLE_METADATA_FILE, CARCOLS_FILE...). Deduced from the name when absent." },
+              "set": { "type": "string", "description": "A stream set: the file is mounted and unmounted with it." },
+              "language": { "type": "string", "description": "For a .gxt2 text file: the game language it is for (american, french...)." }
+            }
+          }
+        ]
+      }
+    },
+    "stream_sets": {
+      "type": "array",
+      "maxItems": 256,
+      "description": "Parts of stream/ that scripts load and unload in game (lsmp.resources.loadStreamSet).",
+      "items": {
+        "type": "object",
+        "required": ["name", "folder"],
+        "additionalProperties": false,
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-z0-9_-]{1,64}$" },
+          "folder": { "type": "string", "pattern": "^stream(/.*)?$", "description": "Inside stream/, e.g. \"stream/night_club\"." },
+          "load": { "enum": ["auto", "manual"], "default": "auto" }
+        }
+      }
+    },
+    "name": { "not": {}, "description": "Not a manifest key: the identity is the folder name. Use title for a display name." },
+    "enabled": { "not": {}, "description": "Not a manifest key: use \"enabled\" in the server's resources.json." },
+    "client_script": { "not": {}, "description": "Use client_scripts." },
+    "server_script": { "not": {}, "description": "Use server_scripts." },
+    "shared_script": { "not": {}, "description": "Use shared_scripts." },
+    "dependency": { "not": {}, "description": "Use dependencies." },
+    "scripts": { "not": {}, "description": "List scripts in client_scripts, server_scripts or shared_scripts." },
+    "webui_dirs": { "not": {}, "description": "Use webui." },
+    "webui_domain": { "not": {}, "description": "Use webui: pages are always served at rsc://<resource name>/." },
+    "files_mount": { "not": {}, "description": "Use data_files." },
+    "stream-sets": { "not": {}, "description": "Use stream_sets." }
+  }
+}
